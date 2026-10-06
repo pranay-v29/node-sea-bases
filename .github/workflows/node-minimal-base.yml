@@ -1,0 +1,88 @@
+name: node-minimal-base
+
+# Builds a minimal, size-optimised Node.js binary for linux-x64 / glibc >= 2.17.
+# See node-minimal-base/README.md.
+on:
+  push:
+    branches: [node-minimal-base]
+    paths:
+      - 'node-minimal-base/**'
+      - '.github/workflows/node-minimal-base.yml'
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: 'Node.js version (no leading v)'
+        default: '22.23.3'
+      opt:
+        description: 'Optimisation level: Os (size) or O2 (speed)'
+        default: 'Os'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64-glibc217:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      NODE_VERSION: ${{ inputs.node_version || '22.23.3' }}
+      OPT: ${{ inputs.opt || 'Os' }}
+    steps:
+      - name: Validate node_version
+        run: |
+          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ ]] || { echo "invalid node_version: $NODE_VERSION" >&2; exit 1; }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Free runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # GCC 15 is compiled from source here; the layer cache makes later runs skip it.
+      - name: Build toolchain image (CentOS 7 + GCC 15)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: node-minimal-base/toolchain
+          file: node-minimal-base/toolchain/Dockerfile.toolchain
+          tags: node-centos7-toolchain:gcc15
+          load: true
+          cache-from: type=gha,scope=centos7-gcc15
+          cache-to: type=gha,mode=max,scope=centos7-gcc15
+
+      - name: Fetch and verify Node.js source
+        run: |
+          mkdir -p in out
+          cd in
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.xz"
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
+          grep " node-v${NODE_VERSION}.tar.xz\$" SHASUMS256.txt | sha256sum -c -
+
+      - name: Build minimal Node.js
+        run: |
+          docker run --rm -e NODE_VERSION -e OPT -e JOBS="$(nproc)" \
+            -v "$PWD/in:/in:ro" -v "$PWD/out:/out" \
+            -v "$PWD/node-minimal-base/build-in-container.sh:/build.sh:ro" \
+            node-centos7-toolchain:gcc15 bash /build.sh
+
+      - name: Run on a stock glibc 2.17 system (CentOS 7)
+        run: |
+          BIN="node-v${NODE_VERSION}-minimal-linux-x64-glibc217"
+          docker run --rm -v "$PWD/out:/out:ro" centos:7 sh -c \
+            "ldd --version | head -1; /out/$BIN -p 'process.version + \" \" + process.arch + \" intl=\" + typeof Intl + \" sea=\" + !!process.getBuiltinModule(\"node:sea\")'"
+
+      - name: Checksums and size
+        run: |
+          cd out
+          gzip -9 -k "node-v${NODE_VERSION}-minimal-linux-x64-glibc217"
+          sha256sum node-v* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-v${{ env.NODE_VERSION }}-minimal-linux-x64-glibc217-${{ env.OPT }}
+          path: out/
+          retention-days: 30
