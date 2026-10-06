@@ -29,6 +29,11 @@ fi
 set +u; source /opt/gcc15/enable; set -u   # also sets LDFLAGS=-static-libstdc++ -static-libgcc
 export PYTHON=python3.13 CC=gcc CXX=g++
 export CFLAGS="-g0 -$OPT" CXXFLAGS="-g0 -$OPT"
+# x64: keep code and read-only data in one segment (as on arm64). With the default
+# -z separate-code, postject (SEA) moves the program headers into a later segment
+# whose address kernels < 5.18 and qemu/Rosetta compute wrongly, so the SEA binary
+# aborts in ld.so (rtld.c: _dl_rtld_map.l_libname). Checked by sea-check.sh.
+if [ "$ARCH" = x64 ]; then export LDFLAGS="$LDFLAGS -Wl,-z,noseparate-code"; fi
 
 # Minimal runtime: no ICU, no inspector, NODE_OPTIONS ignored, no bundled TS
 # tooling / SQLite / built-in code cache; link-time optimisation.

@@ -4,7 +4,7 @@ name: node-minimal-base
 # See node-minimal-base/README.md.
 on:
   push:
-    branches: [node-minimal-base]
+    branches: [main]
     paths:
       - 'node-minimal-base/**'
       - '.github/workflows/node-minimal-base.yml'
@@ -86,3 +86,9 @@ jobs:
           name: node-v${{ env.NODE_VERSION }}-minimal-linux-x64-glibc217-${{ env.OPT }}
           path: out/
           retention-days: 30
+
+      # After the upload, so the base is kept even if this fails.
+      - name: SEA check (program headers for kernels < 5.18) and run on CentOS 7
+        run: |
+          bash node-minimal-base/sea-check.sh "out/node-v${NODE_VERSION}-minimal-linux-x64-glibc217" sea-test
+          docker run --rm -v "$PWD/sea-test:/sea-test:ro" centos:7 /sea-test

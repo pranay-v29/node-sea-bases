@@ -15,6 +15,9 @@ with a `node_version`). Output: a run artifact with the stripped binary, a `.gz`
 ## Checks in the workflow
 - Fails if the binary needs any glibc symbol newer than `GLIBC_2.17`, or links the GCC 15 runtime.
 - Runs the binary in a stock `centos:7` container (glibc 2.17).
+- `sea-check.sh`: injects a test app with postject and fails if the program headers end up
+  where kernels < 5.18 (and qemu/Rosetta) can't find them; x64 links with
+  `-z noseparate-code` for this. Then runs the SEA, also on `centos:7`.
 
 ## Notes
 - The toolchain image (GCC 15 from source, ~1 h) is cached between runs with the GitHub Actions cache.
