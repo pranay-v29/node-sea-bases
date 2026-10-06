@@ -29,11 +29,15 @@ fi
 set +u; source /opt/gcc15/enable; set -u   # also sets LDFLAGS=-static-libstdc++ -static-libgcc
 export PYTHON=python3.13 CC=gcc CXX=g++
 export CFLAGS="-g0 -$OPT" CXXFLAGS="-g0 -$OPT"
-# x64: keep code and read-only data in one segment (as on arm64). With the default
-# -z separate-code, postject (SEA) moves the program headers into a later segment
-# whose address kernels < 5.18 and qemu/Rosetta compute wrongly, so the SEA binary
-# aborts in ld.so (rtld.c: _dl_rtld_map.l_libname). Checked by sea-check.sh.
-if [ "$ARCH" = x64 ]; then export LDFLAGS="$LDFLAGS -Wl,-z,noseparate-code"; fi
+# x64: postject (SEA) moves the program headers to the end of the last read-only
+# segment. Kernels < 5.18 and qemu/Rosetta compute their address from the FIRST
+# segment, so every read-only segment must be mapped with the same file-to-memory
+# offset, or the SEA aborts in ld.so (rtld.c: _dl_rtld_map.l_libname).
+# - noseparate-code: code and read-only data share one segment (as on arm64).
+# - max-page-size=2M: x64 only, node_large_page.cc puts its 2 MB-aligned `lpstub`
+#   in its own segment; with 4 KB pages that segment's offset differs by 0xa2000.
+# Checked by sea-check.sh.
+if [ "$ARCH" = x64 ]; then export LDFLAGS="$LDFLAGS -Wl,-z,noseparate-code -Wl,-z,max-page-size=0x200000"; fi
 
 # Minimal runtime: no ICU, no inspector, NODE_OPTIONS ignored, no bundled TS
 # tooling / SQLite / built-in code cache; link-time optimisation.
