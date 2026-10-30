@@ -25,11 +25,12 @@ permissions:
 
 jobs:
   win-x86:
-    # Node 22's vcbuild needs Visual Studio 2022; windows-2022 ships it.
+    # Node 26's vcbuild needs Visual Studio 2022 with ClangCL; windows-2022 ships both.
     runs-on: windows-2022
     timeout-minutes: 350
     env:
       OPT: ${{ inputs.opt || 'O1' }}
+      ARCH: x86
     defaults:
       run:
         shell: bash

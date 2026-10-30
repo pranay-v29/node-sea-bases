@@ -20,7 +20,7 @@ on:
         default: 'Os'
       build_image:
         description: 'Alpine image to build in'
-        default: 'alpine:3.17'
+        default: 'alpine:3.21'
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 350
     env:
       OPT: ${{ inputs.opt || 'Os' }}
-      BUILD_IMAGE: ${{ inputs.build_image || 'alpine:3.17' }}
+      BUILD_IMAGE: ${{ inputs.build_image || 'alpine:3.21' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

@@ -13,11 +13,11 @@ case "$OPT" in Os|O2) ;; *) echo "OPT must be Os or O2" >&2; exit 1 ;; esac
 
 apk add --no-cache bash binutils-gold g++ gcc libgcc linux-headers make python3 xz file
 
-# Node 22 needs GCC >= 12.2
+# Node 26 needs GCC >= 13.2
 gv=$(gcc -dumpfullversion)
 echo "Alpine $(cat /etc/alpine-release), gcc $gv, $(ld --version | head -1)"
-if [ "$(printf '12.2.0\n%s\n' "$gv" | sort -V | head -1)" != "12.2.0" ]; then
-  echo "gcc $gv is older than 12.2" >&2; exit 1
+if [ "$(printf '13.2.0\n%s\n' "$gv" | sort -V | head -1)" != "13.2.0" ]; then
+  echo "gcc $gv is older than 13.2" >&2; exit 1
 fi
 
 mkdir -p /work && cd /work
