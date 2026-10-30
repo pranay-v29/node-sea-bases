@@ -1,0 +1,79 @@
+name: node-base-darwin-x64
+
+# Kept outside .github/workflows on purpose so it never runs by itself. To run it,
+# copy it into .github/workflows of a repo that has this folder at
+# gh-workflows/node-base-images/ and extensions/node/.nvmrc.
+#
+# Builds the minimal Node.js base for macOS x64 (Intel), natively on
+# macos-15-intel. The Node version comes from extensions/node/.nvmrc. Output: a run
+# artifact (binary, .gz, SHA256SUMS) to download and upload to S3 by hand.
+# Recipe: gh-workflows/node-base-images/scripts/darwin (same minimal flags as the other bases, plus
+# -headerpad for postject).
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'extensions/node/.nvmrc'
+  workflow_dispatch:
+    inputs:
+      opt:
+        description: 'Optimisation level: Os (size) or O2 (speed)'
+        default: 'Os'
+
+permissions:
+  contents: read
+
+jobs:
+  darwin-x64:
+    runs-on: macos-15-intel
+    timeout-minutes: 350
+    env:
+      OPT: ${{ inputs.opt || 'Os' }}
+      ARCH: x64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node version from extensions/node/.nvmrc
+        run: |
+          NODE_VERSION=$(tr -d '[:space:]' < extensions/node/.nvmrc)
+          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ ]] || { echo "invalid version '$NODE_VERSION' or opt '$OPT'" >&2; exit 1; }
+          want=$([ "$ARCH" = arm64 ] && echo arm64 || echo x86_64)
+          [ "$(uname -m)" = "$want" ] || { echo "runner is $(uname -m), expected $want" >&2; exit 1; }
+          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Fetch and verify Node.js source
+        run: |
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.xz"
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
+          grep " node-v${NODE_VERSION}.tar.xz\$" SHASUMS256.txt | shasum -a 256 -c -
+          tar -xf "node-v${NODE_VERSION}.tar.xz"
+
+      - name: Build minimal Node.js
+        run: bash gh-workflows/node-base-images/scripts/darwin/build.sh
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: extensions/node/.nvmrc
+
+      # Header space for postject, NODE_OPTIONS ignored, and a test app injected,
+      # re-signed ad hoc and run.
+      - name: SEA check
+        run: bash gh-workflows/node-base-images/scripts/sea-check.sh "out/node-v${NODE_VERSION}-minimal-darwin-${ARCH}"
+
+      - name: Checksums and size
+        run: |
+          cd out
+          gzip -9 -k "node-v${NODE_VERSION}-minimal-darwin-${ARCH}"
+          shasum -a 256 node-v* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-v${{ env.NODE_VERSION }}-minimal-darwin-x64-${{ env.OPT }}
+          path: out/
+          retention-days: 30

@@ -1,18 +1,21 @@
-name: node-minimal-base
+name: node-base-linux-x64
 
-# Builds a minimal, size-optimised Node.js binary for linux-x64 / glibc >= 2.17.
-# See node-minimal-base/README.md.
+# Kept outside .github/workflows on purpose so it never runs by itself. To run it,
+# copy it into .github/workflows of a repo that has this folder at
+# gh-workflows/node-base-images/ and extensions/node/.nvmrc.
+#
+# Builds the minimal Node.js base for linux-x64 / glibc >= 2.17 that
+# extensions/node/build_scripts injects bslocal.js into (SEA). The Node version
+# comes from extensions/node/.nvmrc. Output: a run artifact (binary, .gz,
+# SHA256SUMS) to download and upload to S3 by hand.
+# Recipe: gh-workflows/node-base-images/scripts/linux (from 07souravkunda/jest-js-browserstack).
 on:
   push:
-    branches: [main]
+    branches: [master]
     paths:
-      - 'node-minimal-base/**'
-      - '.github/workflows/node-minimal-base.yml'
+      - 'extensions/node/.nvmrc'
   workflow_dispatch:
     inputs:
-      node_version:
-        description: 'Node.js version (no leading v)'
-        default: '22.23.3'
       opt:
         description: 'Optimisation level: Os (size) or O2 (speed)'
         default: 'Os'
@@ -25,14 +28,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 350
     env:
-      NODE_VERSION: ${{ inputs.node_version || '22.23.3' }}
       OPT: ${{ inputs.opt || 'Os' }}
     steps:
-      - name: Validate node_version
-        run: |
-          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ ]] || { echo "invalid node_version: $NODE_VERSION" >&2; exit 1; }
-
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node version from extensions/node/.nvmrc
+        run: |
+          NODE_VERSION=$(tr -d '[:space:]' < extensions/node/.nvmrc)
+          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ ]] || { echo "invalid version '$NODE_VERSION' or opt '$OPT'" >&2; exit 1; }
+          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_ENV"
 
       - name: Free runner disk
         run: |
@@ -45,8 +49,8 @@ jobs:
       - name: Build toolchain image (CentOS 7 + GCC 15)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: node-minimal-base/toolchain
-          file: node-minimal-base/toolchain/Dockerfile.toolchain
+          context: gh-workflows/node-base-images/scripts/linux/toolchain
+          file: gh-workflows/node-base-images/scripts/linux/toolchain/Dockerfile.toolchain
           tags: node-centos7-toolchain:gcc15
           load: true
           cache-from: type=gha,scope=centos7-gcc15
@@ -64,7 +68,7 @@ jobs:
         run: |
           docker run --rm -e NODE_VERSION -e OPT -e JOBS="$(nproc)" \
             -v "$PWD/in:/in:ro" -v "$PWD/out:/out" \
-            -v "$PWD/node-minimal-base/build-in-container.sh:/build.sh:ro" \
+            -v "$PWD/gh-workflows/node-base-images/scripts/linux/build-in-container.sh:/build.sh:ro" \
             node-centos7-toolchain:gcc15 bash /build.sh
 
       - name: Run on a stock glibc 2.17 system (CentOS 7)
@@ -72,6 +76,17 @@ jobs:
           BIN="node-v${NODE_VERSION}-minimal-linux-x64-glibc217"
           docker run --rm -v "$PWD/out:/out:ro" centos:7 sh -c \
             "ldd --version | head -1; /out/$BIN -p 'process.version + \" \" + process.arch + \" intl=\" + typeof Intl + \" sea=\" + !!process.getBuiltinModule(\"node:sea\")'"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: extensions/node/.nvmrc
+
+      # Fails if, after postject, the program headers are where kernels < 5.18
+      # (and qemu/Rosetta) can't find them: the SEA would crash in ld.so there.
+      - name: SEA check, also run on CentOS 7
+        run: |
+          bash gh-workflows/node-base-images/scripts/sea-check.sh "out/node-v${NODE_VERSION}-minimal-linux-x64-glibc217" sea-test
+          docker run --rm -v "$PWD/sea-test:/sea-test:ro" centos:7 /sea-test
 
       - name: Checksums and size
         run: |
@@ -86,9 +101,3 @@ jobs:
           name: node-v${{ env.NODE_VERSION }}-minimal-linux-x64-glibc217-${{ env.OPT }}
           path: out/
           retention-days: 30
-
-      # After the upload, so the base is kept even if this fails.
-      - name: SEA check (program headers for kernels < 5.18) and run on CentOS 7
-        run: |
-          bash node-minimal-base/sea-check.sh "out/node-v${NODE_VERSION}-minimal-linux-x64-glibc217" sea-test
-          docker run --rm -v "$PWD/sea-test:/sea-test:ro" centos:7 /sea-test

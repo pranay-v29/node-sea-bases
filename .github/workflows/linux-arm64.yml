@@ -1,0 +1,96 @@
+name: node-base-linux-arm64
+
+# Kept outside .github/workflows on purpose so it never runs by itself. To run it,
+# copy it into .github/workflows of a repo that has this folder at
+# gh-workflows/node-base-images/ and extensions/node/.nvmrc.
+#
+# Builds the minimal Node.js base for linux-arm64 / glibc >= 2.17 natively on an
+# arm64 runner (same recipe as node-base-linux-x64: CentOS 7 aarch64 + GCC 15).
+# The Node version comes from extensions/node/.nvmrc. Output: a run artifact
+# (binary, .gz, SHA256SUMS) to download and upload to S3 by hand.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'extensions/node/.nvmrc'
+  workflow_dispatch:
+    inputs:
+      opt:
+        description: 'Optimisation level: O2 (speed) or Os (size)'
+        default: 'O2'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-arm64-glibc217:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 350
+    env:
+      OPT: ${{ inputs.opt || 'O2' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node version from extensions/node/.nvmrc
+        run: |
+          NODE_VERSION=$(tr -d '[:space:]' < extensions/node/.nvmrc)
+          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ ]] || { echo "invalid version '$NODE_VERSION' or opt '$OPT'" >&2; exit 1; }
+          [ "$(uname -m)" = "aarch64" ] || { echo "not an arm64 runner: $(uname -m)" >&2; exit 1; }
+          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build toolchain image (CentOS 7 aarch64 + GCC 15)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: gh-workflows/node-base-images/scripts/linux/toolchain
+          file: gh-workflows/node-base-images/scripts/linux/toolchain/Dockerfile.toolchain
+          build-args: GCC_BUILD=aarch64-redhat-linux
+          tags: node-centos7-toolchain:gcc15-arm64
+          load: true
+          cache-from: type=gha,scope=centos7-gcc15-arm64
+          cache-to: type=gha,mode=max,scope=centos7-gcc15-arm64
+
+      - name: Fetch and verify Node.js source
+        run: |
+          mkdir -p in out
+          cd in
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.xz"
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
+          grep " node-v${NODE_VERSION}.tar.xz\$" SHASUMS256.txt | sha256sum -c -
+
+      - name: Build minimal Node.js
+        run: |
+          docker run --rm -e NODE_VERSION -e OPT -e JOBS="$(nproc)" \
+            -v "$PWD/in:/in:ro" -v "$PWD/out:/out" \
+            -v "$PWD/gh-workflows/node-base-images/scripts/linux/build-in-container.sh:/build.sh:ro" \
+            node-centos7-toolchain:gcc15-arm64 bash /build.sh
+
+      - name: Run on a stock glibc 2.17 system (CentOS 7 aarch64)
+        run: |
+          BIN="node-v${NODE_VERSION}-minimal-linux-arm64-glibc217"
+          docker run --rm -v "$PWD/out:/out:ro" centos:7 sh -c \
+            "uname -m; ldd --version | head -1; /out/$BIN -p 'process.version + \" \" + process.arch + \" intl=\" + typeof Intl + \" sea=\" + !!process.getBuiltinModule(\"node:sea\")'"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: extensions/node/.nvmrc
+
+      - name: SEA check, also run on CentOS 7
+        run: |
+          bash gh-workflows/node-base-images/scripts/sea-check.sh "out/node-v${NODE_VERSION}-minimal-linux-arm64-glibc217" sea-test
+          docker run --rm -v "$PWD/sea-test:/sea-test:ro" centos:7 /sea-test
+
+      - name: Checksums and size
+        run: |
+          cd out
+          gzip -9 -k "node-v${NODE_VERSION}-minimal-linux-arm64-glibc217"
+          sha256sum node-v* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-v${{ env.NODE_VERSION }}-minimal-linux-arm64-glibc217-${{ env.OPT }}
+          path: out/
+          retention-days: 30

@@ -1,0 +1,90 @@
+name: node-base-alpine
+
+# Kept outside .github/workflows on purpose so it never runs by itself. To run it,
+# copy it into .github/workflows of a repo that has this folder at
+# gh-workflows/node-base-images/ and extensions/node/.nvmrc.
+#
+# Builds the minimal, fully static Node.js base for linux-x64 musl (Alpine) in an
+# alpine container. The Node version comes from extensions/node/.nvmrc. Output: a
+# run artifact (binary, .gz, SHA256SUMS) to download and upload to S3 by hand.
+# Recipe: gh-workflows/node-base-images/scripts/alpine (from 07souravkunda/jest-js-browserstack).
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'extensions/node/.nvmrc'
+  workflow_dispatch:
+    inputs:
+      opt:
+        description: 'Optimisation level: Os (size) or O2 (speed)'
+        default: 'Os'
+      build_image:
+        description: 'Alpine image to build in'
+        default: 'alpine:3.17'
+
+permissions:
+  contents: read
+
+jobs:
+  linux-x64-musl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      OPT: ${{ inputs.opt || 'Os' }}
+      BUILD_IMAGE: ${{ inputs.build_image || 'alpine:3.17' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Node version from extensions/node/.nvmrc
+        run: |
+          NODE_VERSION=$(tr -d '[:space:]' < extensions/node/.nvmrc)
+          [[ "$NODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$OPT" =~ ^(Os|O2)$ && "$BUILD_IMAGE" =~ ^alpine:[0-9]+\.[0-9]+$ ]] \
+            || { echo "invalid version '$NODE_VERSION', opt '$OPT' or image '$BUILD_IMAGE'" >&2; exit 1; }
+          echo "NODE_VERSION=$NODE_VERSION" >> "$GITHUB_ENV"
+
+      - name: Fetch and verify Node.js source
+        run: |
+          mkdir -p in out
+          cd in
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}.tar.xz"
+          curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt"
+          grep " node-v${NODE_VERSION}.tar.xz\$" SHASUMS256.txt | sha256sum -c -
+
+      - name: Build minimal Node.js (fully static musl)
+        run: |
+          docker run --rm -e NODE_VERSION -e OPT -e JOBS="$(nproc)" \
+            -v "$PWD/in:/in:ro" -v "$PWD/out:/out" \
+            -v "$PWD/gh-workflows/node-base-images/scripts/alpine/build-in-container.sh:/build.sh:ro" \
+            "$BUILD_IMAGE" sh /build.sh
+
+      - name: Runs on old and new Alpine, and on the glibc host
+        run: |
+          BIN="node-v${NODE_VERSION}-minimal-linux-x64-musl"
+          for img in alpine:3.8 alpine:latest; do
+            docker run --rm -v "$PWD/out:/out:ro" "$img" sh -c \
+              "echo \"\$(cat /etc/alpine-release):\"; /out/$BIN -p 'process.version + \" \" + process.arch + \" sea=\" + !!process.getBuiltinModule(\"node:sea\")'"
+          done
+          echo "ubuntu host:"; "out/$BIN" -p "process.version + ' ' + process.arch"
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: extensions/node/.nvmrc
+
+      - name: SEA check, also run on Alpine
+        run: |
+          bash gh-workflows/node-base-images/scripts/sea-check.sh "out/node-v${NODE_VERSION}-minimal-linux-x64-musl" sea-test
+          docker run --rm -v "$PWD/sea-test:/sea-test:ro" alpine:latest /sea-test
+
+      - name: Checksums and size
+        run: |
+          cd out
+          gzip -9 -k "node-v${NODE_VERSION}-minimal-linux-x64-musl"
+          sha256sum node-v* > SHA256SUMS
+          cat SHA256SUMS
+          ls -l
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-v${{ env.NODE_VERSION }}-minimal-linux-x64-musl-${{ env.OPT }}
+          path: out/
+          retention-days: 30
