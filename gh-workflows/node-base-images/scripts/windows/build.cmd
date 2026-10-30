@@ -2,6 +2,7 @@
 rem Minimal, size-optimised Node.js for Windows (run from the repo root with
 rem NODE_VERSION set and the extracted source in node-v%NODE_VERSION%).
 rem ARCH=x86 (default) or x64. Node >= 24 builds with ClangCL (vcbuild forces it).
+rem No `nocorepack`: Node >= 25 ships without corepack and vcbuild rejects it.
 setlocal
 cd node-v%NODE_VERSION% || exit /b 1
 
@@ -17,6 +18,6 @@ if not defined OPT set OPT=O1
 if /i "%OPT%"=="O1" set _CL_=/O1
 if not defined ARCH set ARCH=x86
 
-call vcbuild.bat release %ARCH% vs2022 without-intl no-cctest nonpm nocorepack
+call vcbuild.bat release %ARCH% vs2022 without-intl no-cctest nonpm
 if errorlevel 1 exit /b 1
 endlocal
