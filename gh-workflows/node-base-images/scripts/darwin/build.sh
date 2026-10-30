@@ -18,9 +18,10 @@ export CFLAGS="-g0 -$OPT" CXXFLAGS="-g0 -$OPT"
 export LDFLAGS="-Wl,-headerpad,0x4000"
 
 # Same minimal runtime as the other bases: no ICU, no inspector, NODE_OPTIONS
-# ignored, no bundled TS tooling / SQLite / built-in code cache.
+# ignored, no bundled TS tooling / SQLite / built-in code cache, no LIEF (only
+# needed for --build-sea; the binary build injects with postject).
 ./configure --without-node-options --without-intl --without-inspector \
-  --without-amaro --without-sqlite --without-node-code-cache
+  --without-amaro --without-sqlite --without-node-code-cache --without-lief
 echo "make start $(date -u)"
 make -j"$(sysctl -n hw.ncpu)"
 echo "make done $(date -u)"

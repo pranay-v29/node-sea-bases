@@ -27,7 +27,7 @@ cd node-v$V
 export CFLAGS="-g0 -$OPT" CXXFLAGS="-g0 -$OPT"
 python3 configure.py --fully-static \
   --without-node-options --without-intl --without-inspector \
-  --without-amaro --without-sqlite --without-node-code-cache --enable-lto
+  --without-amaro --without-sqlite --without-node-code-cache --without-lief --enable-lto
 echo "make start $(date -u)"
 make -j"$JOBS"
 echo "make done $(date -u)"

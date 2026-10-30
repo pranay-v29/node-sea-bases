@@ -7,9 +7,10 @@ setlocal
 cd node-v%NODE_VERSION% || exit /b 1
 
 rem Same feature set as the linux/macOS bases: no ICU, no inspector, NODE_OPTIONS
-rem ignored, no bundled TS tooling / SQLite / built-in code cache.
+rem ignored, no bundled TS tooling / SQLite / built-in code cache, no LIEF (only
+rem needed for --build-sea; the binary build injects with postject).
 rem (without-intl is a vcbuild argument; the rest go to configure.)
-set config_flags=--without-node-options --without-inspector --without-amaro --without-sqlite --without-node-code-cache
+set config_flags=--without-node-options --without-inspector --without-amaro --without-sqlite --without-node-code-cache --without-lief
 
 rem OPT=O1: optimise for size (MSVC's -Os). _CL_ is appended after the project's
 rem own flags, so /O1 overrides its /Ox. OPT=O2: keep the project's /Ox (speed).
