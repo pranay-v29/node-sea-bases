@@ -41,8 +41,10 @@ if [ "$ARCH" = x64 ]; then export LDFLAGS="$LDFLAGS -Wl,-z,noseparate-code -Wl,-
 
 # Minimal runtime: no ICU, no inspector, NODE_OPTIONS ignored, no bundled TS
 # tooling / SQLite / built-in code cache; link-time optimisation.
+# No LIEF (Node >= 25, only for --build-sea; we inject with postject): glibc 2.17's
+# sys/types.h defines major()/minor() macros that break LIEF's osx/Host.hpp.
 $PYTHON configure.py --without-node-options --without-intl --without-inspector \
-  --without-amaro --without-sqlite --without-node-code-cache --enable-lto
+  --without-amaro --without-sqlite --without-node-code-cache --without-lief --enable-lto
 echo "make start $(date -u)"
 make -j"$JOBS"
 echo "make done $(date -u)"
