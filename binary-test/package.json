@@ -1,11 +1,18 @@
 {
   "name": "browserstack-local-binary-test",
   "private": true,
-  "description": "One Automate session through a BrowserStackLocal binary under test (used by .github/workflows/local-binary-test.yml)",
-  "scripts": {
-    "automate": "node automate.js"
+  "description": "jest-js-browserstack's local sample, run against the BrowserStackLocal binary under test (.github/workflows/local-binary-test.yml)",
+  "devDependencies": {
+    "@types/jest": "^27.4.0",
+    "browserstack-node-sdk": "1.76.1",
+    "jest": "^27.4.7"
   },
   "dependencies": {
-    "selenium-webdriver": "4.52.0"
+    "browserstack-local": "1.5.16",
+    "selenium-webdriver": "4.1.2"
+  },
+  "scripts": {
+    "sample-local-test": "browserstack-node-sdk jest src/sample-local.test.js",
+    "sample-local-test-plain": "jest src/sample-local.test.js"
   }
 }

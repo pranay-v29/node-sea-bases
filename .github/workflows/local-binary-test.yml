@@ -2,11 +2,26 @@ name: local-binary-test
 
 # Smoke-tests a BrowserStackLocal binary (LOC-7627: Node SEA build) per OS/arch:
 #   1. binary starts: `--version` prints a version (size, sha256, startup time -> step summary)
-#   2. tunnel up: `--key ... --local-identifier <run-platform>` reaches the
-#      "You can now access your local server(s) in our remote browser" message
-#   3. one Automate session (Chrome / Windows 11, local=true) loads a page served
-#      on the runner's localhost through the tunnel and checks a unique token
-#   4. tunnel is always stopped; its log (access key redacted) is uploaded
+#   2. one Automate session through the binary: the local sample of
+#      browserstack/jest-js-browserstack (binary-test/src/sample-local.test.js) loads
+#      http://bs-local.com:45454/ (the binary's own Falcon page) and expects the title
+#      "BrowserStack Local"
+#   3. the binary under test is still on disk, unchanged (see below); its log (access
+#      key redacted) is uploaded
+#
+# How the sample runs:
+#   - native runners: as in jest-js-browserstack's reviewing_changes.yml,
+#     `browserstack-node-sdk jest`. The SDK starts the tunnel itself; browserstack.yml
+#     (written per job) points browserStackLocalOptions.binarypath at the binary under
+#     test.
+#   - centos:7 (glibc 2.17 support floor) and alpine: the binary runs in that container
+#     (`docker run --network host`), started by the workflow; the same test file then
+#     runs under plain jest on the host against the hub (HUB_URL), with local=true and
+#     the tunnel's localIdentifier. The SDK can't start a binary inside a container.
+#
+# Fallback guard: if browserstack-local can't execute the binary at binarypath, it
+# deletes it and downloads the production binary, and the test would then pass on
+# that one. The job fails unless the binary is still there with the downloaded sha256.
 #
 # Setup: add repo secrets BROWSERSTACK_USERNAME and BROWSERSTACK_ACCESS_KEY.
 # Run:   gh workflow run local-binary-test.yml -f linux_x64_url='<presigned>' ...
@@ -19,10 +34,6 @@ name: local-binary-test
 # run (UI / API). Only pass short-lived presigned URLs (minutes, not days).
 # The workflow never puts them in env/matrix/artifact names; each job reads its
 # URL straight from the event payload and masks it before use.
-#
-# linux-x64 is also run inside centos:7 (glibc 2.17 support floor) and the
-# alpine binary inside alpine:latest; both use `docker run --network host` so the
-# Selenium test and the test page stay on the host runner.
 on:
   workflow_dispatch:
     inputs:
@@ -115,7 +126,7 @@ jobs:
       LOCAL_IDENTIFIER: gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.platform }}
       BUILD_NAME: local-binary-test ${{ inputs.binary_version || 'unlabelled' }} run ${{ github.run_id }}
       SESSION_NAME: ${{ matrix.platform }} run ${{ github.run_id }}-${{ github.run_attempt }}
-      LOCAL_PORT: '8099'
+      PROJECT_NAME: BrowserStackLocal binary test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -203,7 +214,36 @@ jobs:
         working-directory: binary-test
         run: npm ci --no-audit --no-fund
 
-      - name: "Checks 2+3: tunnel up, one Automate session"
+      - name: "Check 2 (SDK): jest local sample, SDK starts the binary"
+        if: matrix.image == ''
+        working-directory: binary-test
+        run: |
+          set -euo pipefail
+          p() { if [[ "$RUNNER_OS" == Windows ]]; then cygpath -m "$1"; else echo "$1"; fi; }
+          # Credentials come from BROWSERSTACK_USERNAME / BROWSERSTACK_ACCESS_KEY.
+          cat > browserstack.yml <<EOF
+          projectName: $PROJECT_NAME
+          buildName: $BUILD_NAME
+          platforms:
+            - os: Windows
+              osVersion: 11
+              browserName: Chrome
+              browserVersion: latest
+          parallelsPerPlatform: 1
+          browserstackLocal: true
+          browserStackLocalOptions:
+            binarypath: "$(p "$BIN")"
+            localIdentifier: $LOCAL_IDENTIFIER
+            logFile: "$(p "$WORK/tunnel.log")"
+          debug: false
+          networkLogs: false
+          consoleLogs: errors
+          EOF
+          cat browserstack.yml
+          npm run sample-local-test
+
+      - name: "Check 2 (container): binary in ${{ matrix.image }}, jest local sample against the hub"
+        if: matrix.image != ''
         run: |
           set -euo pipefail
           now_ms() { perl -MTime::HiRes=time -e 'printf "%d\n", time*1000'; }
@@ -213,8 +253,7 @@ jobs:
             kill "$PID" 2>/dev/null || true
             sleep 3
             kill -9 "$PID" 2>/dev/null || true
-            [[ -z "$CONTAINER_IMAGE" ]] || docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-            [[ "$RUNNER_OS" != Windows ]] || taskkill //F //IM "$EXE" >/dev/null 2>&1 || true
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
           }
           t0=$(now_ms)
           binary-test/run-bin.sh --key "$BROWSERSTACK_ACCESS_KEY" --local-identifier "$LOCAL_IDENTIFIER" > "$LOG" 2>&1 &
@@ -234,13 +273,22 @@ jobs:
             exit 1
           fi
           echo "| tunnel | connected in $((t1 - t0)) ms, local-identifier \`$LOCAL_IDENTIFIER\` |" >> "$GITHUB_STEP_SUMMARY"
-          node binary-test/automate.js
-          # The binary can self-update; make sure we tested what we downloaded.
+          cd binary-test
+          HUB_URL=https://hub.browserstack.com/wd/hub npm run sample-local-test-plain
+
+      - name: "Check 3: tested the binary we downloaded"
+        if: always() && env.BIN_SHA256 != ''
+        run: |
+          set -euo pipefail
+          [[ -f "$BIN" ]] || {
+            echo "| binary under test | FAILED: deleted during the run (browserstack-local fell back to the production binary) |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$BIN was deleted: browserstack-local could not run it and fell back to a downloaded binary"; exit 1; }
           now=$( (sha256sum "$BIN" 2>/dev/null || shasum -a 256 "$BIN") | cut -d' ' -f1)
-          if [[ "$now" != "$BIN_SHA256" ]] || grep -q 'Updated to' "$LOG"; then
-            echo "::warning::binary auto-updated itself during the run"
-            echo "| auto-update | WARNING: binary changed on disk during the run |" >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$now" != "$BIN_SHA256" ]]; then
+            echo "| binary under test | FAILED: changed on disk during the run (auto-update?) |" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::$BIN changed during the run"; exit 1
           fi
+          echo "| binary under test | unchanged (sha256 matches) |" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Stop leftovers and redact log
         if: always()
