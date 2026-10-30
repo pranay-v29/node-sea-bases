@@ -1,0 +1,11 @@
+{
+  "name": "browserstack-local-binary-test",
+  "private": true,
+  "description": "One Automate session through a BrowserStackLocal binary under test (used by .github/workflows/local-binary-test.yml)",
+  "scripts": {
+    "automate": "node automate.js"
+  },
+  "dependencies": {
+    "selenium-webdriver": "4.52.0"
+  }
+}
